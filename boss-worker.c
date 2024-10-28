@@ -9,9 +9,14 @@
 #include <arpa/inet.h>      /* htonl */
 
 #include <mpi.h>
+#include <errno.h>
 // #include "mpi.h"
 
 #include "rasterfile.h"
+
+#define _FILE_OFFSET_BITS 64
+#define _LARGEFILE64_SOURCE
+
 
 char info[] = "\
 Usage:\n\
@@ -48,13 +53,15 @@ unsigned char cos_component(int i, double freq)
 /**
  *  Save the data array in rasterfile format
  */
-void save_rasterfile(char *name, int largeur, int hauteur, unsigned char *p)
+void save_rasterfile(char * name, size_t largeur, size_t hauteur, unsigned char * p)
 {
     FILE *fd = fopen(name, "w");
     if (fd == NULL) {
         perror("Error while opening output file. ");
         exit(1);
     }
+
+    printf("writing in %s, largeur=%zu, hauteur=%zu\n", name, largeur, hauteur);
 
     struct rasterfile file;
     file.ras_magic = htonl(RAS_MAGIC);
@@ -65,27 +72,42 @@ void save_rasterfile(char *name, int largeur, int hauteur, unsigned char *p)
     file.ras_type = htonl(RT_STANDARD);         /* file type */
     file.ras_maptype = htonl(RMT_EQUAL_RGB);
     file.ras_maplength = htonl(256 * 3);
+
     fwrite(&file, sizeof(struct rasterfile), 1, fd);
 
     /* Color palette: red component */
     for (int i = 255; i >= 0; i--) {
         unsigned char o = cos_component(i, 13.0);
-        fwrite(&o, sizeof(unsigned char), 1, fd);
     }
 
     /* Color palette: green component */
     for (int i = 255; i >= 0; i--) {
         unsigned char o = cos_component(i, 5.0);
-        fwrite(&o, sizeof(unsigned char), 1, fd);
     }
 
     /* Color palette: blue component */
     for (int i = 255; i >= 0; i--) {
         unsigned char o = cos_component(i + 10, 7.0);
-        fwrite(&o, sizeof(unsigned char), 1, fd);
     }
 
-    fwrite(p, largeur * hauteur, sizeof(unsigned char), fd);
+    size_t written = 0;
+    size_t chunk_size = 1024 * 1024 * 128;
+
+    // Write file chunk by chunk
+    while (written < (largeur * hauteur)) {
+        printf("Writing... %.2lf%%\r", 100.0 * written / (largeur * hauteur)); fflush(stdout);
+        size_t write_size = (largeur * hauteur - written > chunk_size) ? chunk_size : (largeur * hauteur - written);
+        size_t result = fwrite(p, sizeof(unsigned char), write_size, fd);
+        if (result < write_size) {
+            printf("\nWrite error (%zu bytes written over %zu)\n", written, largeur * hauteur);
+            perror("");
+            exit(1);
+        }
+        written += write_size;
+    }
+
+    printf("Writing... %.2lf%%\n", 100.0 * written / (largeur * hauteur));
+
     fclose(fd);
 }
 
@@ -130,11 +152,8 @@ enum FLAG {
 
 void copy_lines_in_image(unsigned char * image, unsigned char const * source, unsigned int offset, unsigned int length)
 {
-    // printf("Before copy "); fflush(stdout);
-    // printf("Copying from line %d to line ");
     for (unsigned int i = 0; i < length; i++)
         image[offset + i] = source[i];
-    // printf("After copy\n");
 }
 
 
@@ -153,8 +172,8 @@ int main(int argc, char **argv)
     double ymin = -2;
     double xmax = 2;
     double ymax = 2;
-    int w = 3840;     /* dimensions of the image (4K HTDV!) */
-    int h = 3840;
+    size_t w = 3840;     /* dimensions of the image (4K HTDV!) */
+    size_t h = 3840;
     int depth = 10000;     /* depth of iteration */
 
     /* Retrieving parameters */
@@ -213,7 +232,7 @@ int main(int argc, char **argv)
 
             processed_lines_amount = granularity;
 
-            // If there's less than `granularity` lines remaining, just request the rest
+            // If there's less than `granularity` lines remaining, just request the difference
             if (offset_process_is_working_with[status.MPI_SOURCE] > (h - granularity))
                 processed_lines_amount = h - offset_process_is_working_with[status.MPI_SOURCE];
 
@@ -251,7 +270,10 @@ int main(int argc, char **argv)
 
         fprintf(stderr, "-----\nTotal computing time: %g sec\n", end - beginning);
 
-        save_rasterfile("mandel.ras", w, h, image);
+        char filename[100];
+        sprintf(filename, "mandel_%zux%zu.ras", w, h);
+
+        save_rasterfile(filename, w, h, image);
 
         free(offset_process_is_working_with);
         free(image);
