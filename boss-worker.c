@@ -185,18 +185,14 @@ int main(int argc, char **argv)
     MPI_Comm_size(MPI_COMM_WORLD, &p);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    int granularity = 10; // number of lines pr
+    int granularity = 5; // number of lines pr
     MPI_Status status;
 
     int * metadata = malloc(sizeof(unsigned int) * 2);
 
     // Say p-1 is the root
     if (rank == (p - 1)) {
-        /* show parameters, for verification */
-        // fprintf(stderr, "Domaine: [%g,%g] x [%g,%g]\n", xmin, ymin, xmax, ymax);
-        // fprintf(stderr, "Increment : %g, %g\n", xinc, yinc);
-        // fprintf(stderr, "depth: %d\n", depth);
-        // fprintf(stderr, "Dim image: %d x %d\n", w, h);
+        printf("Launching with %d threads...\n", p);
 
         unsigned char * image = (unsigned char *) malloc(sizeof(unsigned int) * w * h);
 
@@ -205,7 +201,7 @@ int main(int argc, char **argv)
         for (unsigned int i = 0; i < (p - 1); i++)
             offset_process_is_working_with[i] = i * granularity;
 
-        unsigned int processed_line_amount;
+        unsigned int processed_lines_amount;
 
         unsigned char * computed_lines = (unsigned char *) malloc(sizeof(unsigned char) * w * granularity);
 
@@ -215,11 +211,13 @@ int main(int argc, char **argv)
         for (int i = (p - 1) * granularity; i < h; i += granularity) {
             MPI_Recv(computed_lines, w * granularity, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 
-            processed_line_amount = granularity;
-            if (offset_process_is_working_with[status.MPI_SOURCE] > (h - granularity))
-                processed_line_amount = h - offset_process_is_working_with[status.MPI_SOURCE];
+            processed_lines_amount = granularity;
 
-            copy_lines_in_image(image, computed_lines, offset_process_is_working_with[status.MPI_SOURCE] * w, processed_line_amount * w);
+            // If there's less than `granularity` lines remaining, just request the rest
+            if (offset_process_is_working_with[status.MPI_SOURCE] > (h - granularity))
+                processed_lines_amount = h - offset_process_is_working_with[status.MPI_SOURCE];
+
+            copy_lines_in_image(image, computed_lines, offset_process_is_working_with[status.MPI_SOURCE] * w, processed_lines_amount * w);
 
             metadata[0] = i;
             metadata[1] = (h - i) >= granularity ? granularity : (h - i);
@@ -227,8 +225,12 @@ int main(int argc, char **argv)
             // Sending next line
             MPI_Send(metadata, 2, MPI_INT, status.MPI_SOURCE, WORK_MESSAGE, MPI_COMM_WORLD);
 
+            printf("%.2f%%\r", 100.0 * i / h);
+
             offset_process_is_working_with[status.MPI_SOURCE] = i;
         }
+
+        printf("%.2f%%\n", 100.0);
 
         double end = wallclock_time();
 
@@ -236,18 +238,16 @@ int main(int argc, char **argv)
         for (unsigned int i = 0; i < p-1; i++) {
             MPI_Recv(computed_lines, w * granularity, MPI_CHAR, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 
-            processed_line_amount = granularity;
+            processed_lines_amount = granularity;
             if (offset_process_is_working_with[status.MPI_SOURCE] > (h - granularity))
-                processed_line_amount = h - offset_process_is_working_with[status.MPI_SOURCE];
+                processed_lines_amount = h - offset_process_is_working_with[status.MPI_SOURCE];
 
             copy_lines_in_image(image, computed_lines,
                                 offset_process_is_working_with[status.MPI_SOURCE] * w,
-                                processed_line_amount * w);
+                                processed_lines_amount * w);
 
             MPI_Send(metadata, 2, MPI_INT, status.MPI_SOURCE, END_OF_WORK, MPI_COMM_WORLD);
         }
-
-        // MPI_Barrier(MPI_COMM_WORLD);
 
         fprintf(stderr, "-----\nTotal computing time: %g sec\n", end - beginning);
 
@@ -269,13 +269,9 @@ int main(int argc, char **argv)
         double x;
         double y;
 
-        // double beginning = wallclock_time();
-
         do {
             y = ymin + yinc * startingpoint;
             x = xmin;
-
-            // printf("[#%d] %d lines to process, starting at line %d\n", rank, no_lines_to_process, startingpoint);
 
             for (unsigned int i = 0; i < no_lines_to_process * w; i++) {
                 if (i % w == 0)
@@ -294,15 +290,8 @@ int main(int argc, char **argv)
 
             startingpoint = metadata[0];
             no_lines_to_process = metadata[1];
-            // printf("[#%d] Received interval %d-%d\n", rank, startingpoint, startingpoint + no_lines_to_process - 1);
 
         } while (status.MPI_TAG != END_OF_WORK);
-
-        // double end = wallclock_time();
-
-        // printf("[#%02d] Computation time: %lf sec\n", rank, end - beginning);
-
-        // MPI_Barrier(MPI_COMM_WORLD);
 
         free(subimage);
     }
