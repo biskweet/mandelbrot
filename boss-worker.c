@@ -68,7 +68,7 @@ void save_rasterfile(char * name, size_t largeur, size_t hauteur, unsigned char 
     file.ras_width = htonl(largeur);            /* width of the image, in pixels */
     file.ras_height = htonl(hauteur);           /* height of the image, in pixels */
     file.ras_depth = htonl(8);              /* depth of each pixel (1, 8 or 24 ) */
-    file.ras_length = htonl(largeur * hauteur);     /* size of the image in nb of bytes */
+    file.ras_length = htonl(largeur * hauteur);      /* size of the image in nb of bytes */
     file.ras_type = htonl(RT_STANDARD);         /* file type */
     file.ras_maptype = htonl(RMT_EQUAL_RGB);
     file.ras_maplength = htonl(256 * 3);
@@ -78,16 +78,19 @@ void save_rasterfile(char * name, size_t largeur, size_t hauteur, unsigned char 
     /* Color palette: red component */
     for (int i = 255; i >= 0; i--) {
         unsigned char o = cos_component(i, 13.0);
+        fwrite(&o, sizeof(unsigned char), 1, fd);
     }
 
     /* Color palette: green component */
     for (int i = 255; i >= 0; i--) {
         unsigned char o = cos_component(i, 5.0);
+        fwrite(&o, sizeof(unsigned char), 1, fd);
     }
 
     /* Color palette: blue component */
     for (int i = 255; i >= 0; i--) {
         unsigned char o = cos_component(i + 10, 7.0);
+        fwrite(&o, sizeof(unsigned char), 1, fd);
     }
 
     size_t written = 0;
@@ -95,7 +98,7 @@ void save_rasterfile(char * name, size_t largeur, size_t hauteur, unsigned char 
 
     // Write file chunk by chunk
     while (written < (largeur * hauteur)) {
-        printf("Writing... %.2lf%%\r", 100.0 * written / (largeur * hauteur)); fflush(stdout);
+        printf("Writing... %.2lf%%\r", 100.0 * written / (largeur * hauteur)); fflush(fd);
         size_t write_size = (largeur * hauteur - written > chunk_size) ? chunk_size : (largeur * hauteur - written);
         size_t result = fwrite(p, sizeof(unsigned char), write_size, fd);
         if (result < write_size) {
